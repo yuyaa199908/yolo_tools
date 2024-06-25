@@ -18,3 +18,5 @@ ros2 launch realsense2_camera rs_launch.py enable_rgbd:=true enable_sync:=true a
 ros2 launch yolo_tools rgbd2cloud.launch.py
 ~~~
 ## config
+### yolo.classes
+- https://qiita.com/Nya-ku/items/ad07872260cfe8abd322
