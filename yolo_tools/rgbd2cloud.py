@@ -20,15 +20,11 @@ import struct
 class RGBD2CLOUD(Node):
     def __init__(self):
         super().__init__('RGBD2CLOUD')
-        logging.error("start")
-
         self.init_param()
-
         # qos_policy = rclpy.qos.QoSProfile(depth=10, reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT)
-
         self.sub_image = self.create_subscription(
                             RGBD(), 
-                            '/camera/rgbd', 
+                            '/input_rgbd', 
                             self.CB_dumping,
                             10)
         
@@ -39,7 +35,6 @@ class RGBD2CLOUD(Node):
         input_rgb = cv2.cvtColor(CvBridge().imgmsg_to_cv2(msg.rgb), cv2.COLOR_BGR2RGB).astype(np.uint8)
         # mm?
         input_d = CvBridge().imgmsg_to_cv2(msg.depth, "passthrough") #.astype(np.int32)
-
         # resize
         input_rgb = cv2.resize(input_rgb, dsize=None, fx=self.fxy, fy=self.fxy ,interpolation=cv2.INTER_NEAREST)
         input_d = cv2.resize(input_d, dsize=None, fx=self.fxy, fy=self.fxy ,interpolation=cv2.INTER_NEAREST)
@@ -56,9 +51,10 @@ class RGBD2CLOUD(Node):
             input_d[mask_np==0] = 0.0
 
             # publish mask image
-            mask_img = mask_np * 255
-            msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
-            self.pub_image.publish(msg_out_img)
+            if self.do_publish_image:
+                mask_img = mask_np * 255
+                msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
+                self.pub_image.publish(msg_out_img)
 
             color = o3d.geometry.Image(input_rgb)
             depth = o3d.geometry.Image(input_d)#.astype(np.uint16))
@@ -84,11 +80,11 @@ class RGBD2CLOUD(Node):
             self.pub_cloud.publish(msg_out)
 
         else:
-        # 点の数が0のPointCloud2メッセージを作成
+        # 
             header = Header()
             now = self.get_clock().now()
             header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-            header.frame_id = "camera_color_frame"    #todo
+            header.frame_id = self.frame_id
             empty_pointcloud = PointCloud2()
             empty_pointcloud.header = header
             empty_pointcloud.height = 1
@@ -97,24 +93,35 @@ class RGBD2CLOUD(Node):
                                         PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
                                         PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
                                         PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-                                        PointField(name='rgb', offset=12, datatype=PointField.UINT32, count=1)
+                                        PointField(name='rgb', offset=12, datatype=PointField.FLOAT32, count=1)
                                     ]
             empty_pointcloud.is_bigendian = False
-            empty_pointcloud.point_step = 0
+            empty_pointcloud.point_step = 16
             empty_pointcloud.row_step = 0
-            empty_pointcloud.is_dense = False
+            empty_pointcloud.is_dense = True
             empty_pointcloud.data = bytes([])
 
             self.pub_cloud.publish(empty_pointcloud)
 
     def init_param(self):
-        self.fxy = 0.25
-        self.model = YOLO("/home/aichi2204/ros2_ws/src/tool/yolo_tools/yolo_tools/yolov8n-seg.pt")
-        logging.error("load yolo8")
+        self.declare_parameter('image_scale', 0.25)
+        self.declare_parameter('do_publish_image', False)
+        self.declare_parameter('frame_id', "hoge")
+        self.declare_parameter('yolo.model_path', "")
+        self.declare_parameter('yolo.classes', [0])
+
+        self.fxy = self.get_parameter("image_scale").get_parameter_value().double_value
+        self.do_publish_image = self.get_parameter('do_publish_image').get_parameter_value().bool_value
+        self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
+        yolo_path = self.get_parameter('yolo.model_path').get_parameter_value().string_value
+        self.yolo_classes = self.get_parameter('yolo.classes').get_parameter_value().integer_array_value
+        self.model = YOLO(yolo_path)
+
 
     def create_mask(self,img):
         h,w,_ = img.shape
-        results = self.model(img,conf=0.25 ,classes=[0])
+        results = self.model(img,conf=0.25 ,classes=self.yolo_classes)
+        #   TODO: check masks with more than 2 classes
         if results[0].masks:
             mask = results[0].masks.data.to('cpu').detach().numpy().copy().any(axis=0)
             return cv2.resize(mask.astype(int),(w,h),interpolation=cv2.INTER_NEAREST), len(results[0].masks)
@@ -125,7 +132,7 @@ class RGBD2CLOUD(Node):
         header = Header()
         now = self.get_clock().now()
         header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-        header.frame_id = "camera_color_frame"    #todo
+        header.frame_id = self.frame_id
 
         rgb_float_array = self.convert_rgb_array_to_float(pcd_o3d.colors)
         
