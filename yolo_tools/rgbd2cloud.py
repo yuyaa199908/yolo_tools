@@ -20,12 +20,8 @@ import struct
 class RGBD2CLOUD(Node):
     def __init__(self):
         super().__init__('RGBD2CLOUD')
-        logging.error("start")
-
         self.init_param()
-
         # qos_policy = rclpy.qos.QoSProfile(depth=10, reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT)
-
         self.sub_image = self.create_subscription(
                             RGBD(), 
                             '/input_rgbd', 

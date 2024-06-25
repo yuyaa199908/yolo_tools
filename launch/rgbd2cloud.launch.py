@@ -18,8 +18,8 @@ def generate_launch_description():
             namespace='rgbd2cloud',
             executable='rgbd2cloud',
             remappings=[('/input_rgbd', '/camera/rgbd'),
-                        ('/output_cloud', '/hoge_cloud'),
-                        ('/output_image', '/hoge_maks')],
+                        ('/output_cloud', '/hoge/cloud'),
+                        ('/output_image', '/hoge/maks')],
             parameters=[config]
         ),
     ])
