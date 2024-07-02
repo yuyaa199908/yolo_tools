@@ -88,28 +88,32 @@ class RGBD2CLOUD(Node):
                 msg_out = self.convert_o3d_to_ros2(pcd_o3d)
 
             else:
-                header = Header()
-                now = self.get_clock().now()
-                header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-                header.frame_id = self.frame_id
-                msg_out = PointCloud2()
-                msg_out.header = header
-                msg_out.height = 1
-                msg_out.width = 0
-                msg_out.fields =[
-                                            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-                                            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-                                            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-                                            PointField(name='rgb', offset=12, datatype=PointField.FLOAT32, count=1)
-                                        ]
-                msg_out.is_bigendian = False
-                msg_out.point_step = 16
-                msg_out.row_step = 0
-                msg_out.is_dense = True
-                msg_out.data = bytes([])
+                msg_out = self.create_empty_cloud_msg()
 
             self.pub_cloud.publish(msg_out)
             self.last_publish_time = current_time
+
+    def create_empty_cloud_msg(self):
+        header = Header()
+        now = self.get_clock().now()
+        header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
+        header.frame_id = self.frame_id
+        msg_out = PointCloud2()
+        msg_out.header = header
+        msg_out.height = 1
+        msg_out.width = 0
+        msg_out.fields =[
+                                    PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+                                    PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+                                    PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+                                    PointField(name='rgb', offset=12, datatype=PointField.FLOAT32, count=1)
+                                ]
+        msg_out.is_bigendian = False
+        msg_out.point_step = 16
+        msg_out.row_step = 0
+        msg_out.is_dense = True
+        msg_out.data = bytes([])
+        return msg_out
 
     def init_param(self):
         self.declare_parameter('image_scale', 0.25)
@@ -138,15 +142,19 @@ class RGBD2CLOUD(Node):
             return None, 0
 
     def convert_o3d_to_ros2(self, pcd_o3d):
-        header = Header()
-        now = self.get_clock().now()
-        header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-        header.frame_id = self.frame_id
-        rgb_float_array = self.convert_rgb_array_to_float(pcd_o3d.colors)
-        
-        arr = np.concatenate([np.asarray(pcd_o3d.points) ,rgb_float_array.reshape((-1,1))],1)
-        pc = PointCloud.from_xyzrgb_points(arr) #PointCloud.from_points(arr, fields, types)
-        out_msg = pc.to_msg(header)
+        # TODO: fix convert_rgb_array_to_float
+        try:
+            header = Header()
+            now = self.get_clock().now()
+            header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
+            header.frame_id = self.frame_id
+            rgb_float_array = self.convert_rgb_array_to_float(pcd_o3d.colors)
+            arr = np.concatenate([np.asarray(pcd_o3d.points) ,rgb_float_array.reshape((-1,1))],1)
+            pc = PointCloud.from_xyzrgb_points(arr) #PointCloud.from_points(arr, fields, types)
+            out_msg = pc.to_msg(header)
+        except:
+            out_msg = self.create_empty_cloud_msg()
+
         return out_msg
     
     def convert_rgb_array_to_float(self, rgb_array):
