@@ -17,8 +17,6 @@ from pypcd4 import PointCloud
 from builtin_interfaces.msg import Time
 import struct
 
-import time
-
 class RGBD2CLOUD(Node):
     def __init__(self):
         super().__init__('RGBD2CLOUD')
@@ -28,14 +26,14 @@ class RGBD2CLOUD(Node):
         self.sub_image = self.create_subscription(
                             RGBD(), 
                             '/input_rgbd', 
-                            self.CB_dumping,
+                            self.CB_main,
                             10)
         
         self.pub_cloud =  self.create_publisher(PointCloud2, '/output_cloud', 10)
         self.pub_image =  self.create_publisher(Image, '/output_image', 10)
         self.last_publish_time = self.get_clock().now()
 
-    def CB_dumping(self, msg):
+    def CB_main(self, msg):
         current_time = self.get_clock().now()
         time_since_last_publish = (current_time - self.last_publish_time).nanoseconds / 1e9  # 秒に変換
 
@@ -51,20 +49,21 @@ class RGBD2CLOUD(Node):
             # yolo
             mask_np, obj_num = self.create_mask(input_rgb)
 
+            input_d[mask_np==0] = 0.0
+
+            # publish mask image
+            if self.do_publish_image:
+                mask_img = mask_np * 255
+                msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
+                self.pub_image.publish(msg_out_img)
+
             if obj_num >= 1:
                 fx_d = msg.rgb_camera_info.k[0] * self.fxy
                 fy_d = msg.rgb_camera_info.k[4] * self.fxy
                 cx_d = msg.rgb_camera_info.k[2] * self.fxy
                 cy_d = msg.rgb_camera_info.k[5] * self.fxy
 
-                input_d[mask_np==0] = 0.0
-
-                # publish mask image
-                if self.do_publish_image:
-                    mask_img = mask_np * 255
-                    msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
-                    self.pub_image.publish(msg_out_img)
-
+                # create cloud
                 color = o3d.geometry.Image(input_rgb)
                 depth = o3d.geometry.Image(input_d)#.astype(np.uint16))
                 height, width = input_d.shape
@@ -88,6 +87,12 @@ class RGBD2CLOUD(Node):
                 msg_out = self.convert_o3d_to_ros2(pcd_o3d)
 
             else:
+                if self.do_publish_image:
+                    mask_img = mask_np * 255
+                    msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
+                    self.pub_image.publish(msg_out_img)
+
+                # create cloud
                 msg_out = self.create_empty_cloud_msg()
 
             self.pub_cloud.publish(msg_out)
@@ -131,7 +136,6 @@ class RGBD2CLOUD(Node):
         self.model = YOLO(yolo_path)
         self.pub_interval = self.get_parameter("pub_interval").get_parameter_value().double_value
 
-
     def create_mask(self,img):
         h,w,_ = img.shape
         results = self.model(img,conf=0.25 ,classes=self.yolo_classes)
@@ -139,7 +143,7 @@ class RGBD2CLOUD(Node):
             mask = results[0].masks.data.to('cpu').detach().numpy().copy().any(axis=0)
             return cv2.resize(mask.astype(int),(w,h),interpolation=cv2.INTER_NEAREST), len(results[0].masks)
         else:
-            return None, 0
+            return np.zeros((h,w)), 0
 
     def convert_o3d_to_ros2(self, pcd_o3d):
         # TODO: fix convert_rgb_array_to_float
