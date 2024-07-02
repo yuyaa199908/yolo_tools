@@ -17,10 +17,13 @@ from pypcd4 import PointCloud
 from builtin_interfaces.msg import Time
 import struct
 
+import time
+
 class RGBD2CLOUD(Node):
     def __init__(self):
         super().__init__('RGBD2CLOUD')
         self.init_param()
+
         # qos_policy = rclpy.qos.QoSProfile(depth=10, reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT)
         self.sub_image = self.create_subscription(
                             RGBD(), 
@@ -28,80 +31,85 @@ class RGBD2CLOUD(Node):
                             self.CB_dumping,
                             10)
         
-        self.pub_cloud =  self.create_publisher(PointCloud2, '/output_cloud', 1)
-        self.pub_image =  self.create_publisher(Image, '/output_image', 1)
+        self.pub_cloud =  self.create_publisher(PointCloud2, '/output_cloud', 10)
+        self.pub_image =  self.create_publisher(Image, '/output_image', 10)
+        self.last_publish_time = self.get_clock().now()
+
     def CB_dumping(self, msg):
-        # bgr -> rgb
-        input_rgb = cv2.cvtColor(CvBridge().imgmsg_to_cv2(msg.rgb), cv2.COLOR_BGR2RGB).astype(np.uint8)
-        # mm?
-        input_d = CvBridge().imgmsg_to_cv2(msg.depth, "passthrough") #.astype(np.int32)
-        # resize
-        input_rgb = cv2.resize(input_rgb, dsize=None, fx=self.fxy, fy=self.fxy ,interpolation=cv2.INTER_NEAREST)
-        input_d = cv2.resize(input_d, dsize=None, fx=self.fxy, fy=self.fxy ,interpolation=cv2.INTER_NEAREST)
+        current_time = self.get_clock().now()
+        time_since_last_publish = (current_time - self.last_publish_time).nanoseconds / 1e9  # 秒に変換
 
-        # yolo
-        mask_np, obj_num = self.create_mask(input_rgb)
+        if time_since_last_publish >= self.pub_interval:
+            # bgr -> rgb
+            input_rgb = cv2.cvtColor(CvBridge().imgmsg_to_cv2(msg.rgb), cv2.COLOR_BGR2RGB).astype(np.uint8)
+            # mm?
+            input_d = CvBridge().imgmsg_to_cv2(msg.depth, "passthrough") #.astype(np.int32)
+            # resize
+            input_rgb = cv2.resize(input_rgb, dsize=None, fx=self.fxy, fy=self.fxy ,interpolation=cv2.INTER_NEAREST)
+            input_d = cv2.resize(input_d, dsize=None, fx=self.fxy, fy=self.fxy ,interpolation=cv2.INTER_NEAREST)
 
-        if obj_num >= 1:
-            fx_d = msg.rgb_camera_info.k[0] * self.fxy
-            fy_d = msg.rgb_camera_info.k[4] * self.fxy
-            cx_d = msg.rgb_camera_info.k[2] * self.fxy
-            cy_d = msg.rgb_camera_info.k[5] * self.fxy
+            # yolo
+            mask_np, obj_num = self.create_mask(input_rgb)
 
-            input_d[mask_np==0] = 0.0
+            if obj_num >= 1:
+                fx_d = msg.rgb_camera_info.k[0] * self.fxy
+                fy_d = msg.rgb_camera_info.k[4] * self.fxy
+                cx_d = msg.rgb_camera_info.k[2] * self.fxy
+                cy_d = msg.rgb_camera_info.k[5] * self.fxy
 
-            # publish mask image
-            if self.do_publish_image:
-                mask_img = mask_np * 255
-                msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
-                self.pub_image.publish(msg_out_img)
+                input_d[mask_np==0] = 0.0
 
-            color = o3d.geometry.Image(input_rgb)
-            depth = o3d.geometry.Image(input_d)#.astype(np.uint16))
-            height, width = input_d.shape
-            pinhole_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
-                width, height, fx_d,fy_d, cx_d, cy_d
-            )
-            rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                color, depth, convert_rgb_to_intensity=False
-            )
-            pcd_o3d = o3d.geometry.PointCloud.create_from_rgbd_image(
-                rgbd, pinhole_camera_intrinsic,
-                project_valid_depth_only=True
-            )
+                # publish mask image
+                if self.do_publish_image:
+                    mask_img = mask_np * 255
+                    msg_out_img = CvBridge().cv2_to_imgmsg(mask_img.astype(np.uint8), encoding="mono8")
+                    self.pub_image.publish(msg_out_img)
 
-            # # Convert to Open3D.PointCLoud:
-            pcd_o3d.transform( [[0,0, 1,0], 
-                                [-1, 0, 0, 0], 
-                                [0, -1, 0, 0], 
-                                [0, 0, 0, 1]])
+                color = o3d.geometry.Image(input_rgb)
+                depth = o3d.geometry.Image(input_d)#.astype(np.uint16))
+                height, width = input_d.shape
+                pinhole_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
+                    width, height, fx_d,fy_d, cx_d, cy_d
+                )
+                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                    color, depth, convert_rgb_to_intensity=False
+                )
+                pcd_o3d = o3d.geometry.PointCloud.create_from_rgbd_image(
+                    rgbd, pinhole_camera_intrinsic,
+                    project_valid_depth_only=True
+                )
 
-            msg_out = self.convert_o3d_to_ros2(pcd_o3d)
+                # # Convert to Open3D.PointCLoud:
+                pcd_o3d.transform( [[0,0, 1,0], 
+                                    [-1, 0, 0, 0], 
+                                    [0, -1, 0, 0], 
+                                    [0, 0, 0, 1]])
+
+                msg_out = self.convert_o3d_to_ros2(pcd_o3d)
+
+            else:
+                header = Header()
+                now = self.get_clock().now()
+                header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
+                header.frame_id = self.frame_id
+                msg_out = PointCloud2()
+                msg_out.header = header
+                msg_out.height = 1
+                msg_out.width = 0
+                msg_out.fields =[
+                                            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+                                            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+                                            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+                                            PointField(name='rgb', offset=12, datatype=PointField.FLOAT32, count=1)
+                                        ]
+                msg_out.is_bigendian = False
+                msg_out.point_step = 16
+                msg_out.row_step = 0
+                msg_out.is_dense = True
+                msg_out.data = bytes([])
+
             self.pub_cloud.publish(msg_out)
-
-        else:
-        # 
-            header = Header()
-            now = self.get_clock().now()
-            header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-            header.frame_id = self.frame_id
-            empty_pointcloud = PointCloud2()
-            empty_pointcloud.header = header
-            empty_pointcloud.height = 1
-            empty_pointcloud.width = 0
-            empty_pointcloud.fields =[
-                                        PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-                                        PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-                                        PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-                                        PointField(name='rgb', offset=12, datatype=PointField.FLOAT32, count=1)
-                                    ]
-            empty_pointcloud.is_bigendian = False
-            empty_pointcloud.point_step = 16
-            empty_pointcloud.row_step = 0
-            empty_pointcloud.is_dense = True
-            empty_pointcloud.data = bytes([])
-
-            self.pub_cloud.publish(empty_pointcloud)
+            self.last_publish_time = current_time
 
     def init_param(self):
         self.declare_parameter('image_scale', 0.25)
@@ -109,6 +117,7 @@ class RGBD2CLOUD(Node):
         self.declare_parameter('frame_id', "hoge")
         self.declare_parameter('yolo.model_path', "")
         self.declare_parameter('yolo.classes', [0])
+        self.declare_parameter('pub_interval', 0.5)
 
         self.fxy = self.get_parameter("image_scale").get_parameter_value().double_value
         self.do_publish_image = self.get_parameter('do_publish_image').get_parameter_value().bool_value
@@ -116,12 +125,12 @@ class RGBD2CLOUD(Node):
         yolo_path = self.get_parameter('yolo.model_path').get_parameter_value().string_value
         self.yolo_classes = self.get_parameter('yolo.classes').get_parameter_value().integer_array_value
         self.model = YOLO(yolo_path)
+        self.pub_interval = self.get_parameter("pub_interval").get_parameter_value().double_value
 
 
     def create_mask(self,img):
         h,w,_ = img.shape
         results = self.model(img,conf=0.25 ,classes=self.yolo_classes)
-        #   TODO: check masks with more than 2 classes
         if results[0].masks:
             mask = results[0].masks.data.to('cpu').detach().numpy().copy().any(axis=0)
             return cv2.resize(mask.astype(int),(w,h),interpolation=cv2.INTER_NEAREST), len(results[0].masks)
@@ -133,11 +142,9 @@ class RGBD2CLOUD(Node):
         now = self.get_clock().now()
         header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
         header.frame_id = self.frame_id
-
         rgb_float_array = self.convert_rgb_array_to_float(pcd_o3d.colors)
         
         arr = np.concatenate([np.asarray(pcd_o3d.points) ,rgb_float_array.reshape((-1,1))],1)
-
         pc = PointCloud.from_xyzrgb_points(arr) #PointCloud.from_points(arr, fields, types)
         out_msg = pc.to_msg(header)
         return out_msg
@@ -164,6 +171,7 @@ class RGBD2CLOUD(Node):
         # Pack this integer into a float32
         rgb_float = struct.unpack('f', struct.pack('I', rgb_int))[0]
         return rgb_float
+
 
 def main():
     rclpy.init()
