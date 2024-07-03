@@ -38,7 +38,11 @@ class RGBD2CLOUD(Node):
         time_since_last_publish = (current_time - self.last_publish_time).nanoseconds / 1e9  # 秒に変換
 
         if time_since_last_publish >= self.pub_interval:
-            # bgr -> rgb
+            self.process(msg)
+            self.last_publish_time = current_time
+
+    def process(self,msg):
+        # bgr -> rgb
             input_rgb = cv2.cvtColor(CvBridge().imgmsg_to_cv2(msg.rgb), cv2.COLOR_BGR2RGB).astype(np.uint8)
             # mm?
             input_d = CvBridge().imgmsg_to_cv2(msg.depth, "passthrough") #.astype(np.int32)
@@ -96,7 +100,6 @@ class RGBD2CLOUD(Node):
                 msg_out = self.create_empty_cloud_msg()
 
             self.pub_cloud.publish(msg_out)
-            self.last_publish_time = current_time
 
     def create_empty_cloud_msg(self):
         header = Header()

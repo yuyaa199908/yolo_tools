@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'rgbd2cloud = '+ package_name + '.rgbd2cloud:main',
+            'rgbd2mesh = '+ package_name + '.rgbd2mesh:main',
         ],
     },
 )
