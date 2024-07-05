@@ -1,6 +1,11 @@
 # note
 - 遅延がすごいのでpclで実装するかrealsense-ros内で実装すべき
-- setup.py だと --symlink-install がきかないらしいので config と launch を変えたらビルドし直すこと
+- ~~setup.py だと --symlink-install がきかないらしいので config と launch を変えたらビルドし直すこと~~
+- `--symlink-install` で`~/ros2_ws/install/yolo_tools/share/yolo_tools/`にシンボリックリンクが生成されない場合は最新の`python3-colcon-core`をインストール
+~~~
+sudo apt install python3-colcon-core
+~~~
+
 # install
 ~~~
 cd ~/ros2_ws/src
@@ -9,10 +14,6 @@ wget https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n.pt
 cd ~/ros2_ws
 pip3 install ultralytics open3d pypcd4 opencv-contrib-python
 colcon build --symlink-install --base-path ~/ros2_ws/src/yolo_tools/
-~~~
-`--symlink-install` で`~/ros2_ws/install/yolo_tools/share/yolo_tools/`にシンボリックリンクが生成されない場合は`python3-colcon-core`をインストール
-~~~
-sudo apt install python3-colcon-core
 ~~~
 
 # rgbd2cloud
