@@ -10,7 +10,7 @@ cd ~/ros2_ws
 pip3 install ultralytics open3d pypcd4 opencv-contrib-python
 colcon build --symlink-install --base-path ~/ros2_ws/src/yolo_tools/
 ~~~
-'--symlink-install' で'~/ros2_ws/install/yolo_tools/share/yolo_tools/'にシンボリックリンクが生成されない場合は'python3-colcon-core'をインストール
+`--symlink-install` で`~/ros2_ws/install/yolo_tools/share/yolo_tools/`にシンボリックリンクが生成されない場合は`python3-colcon-core`をインストール
 ~~~
 sudo apt install python3-colcon-core
 ~~~
@@ -34,3 +34,4 @@ ros2 launch realsense2_camera rs_launch.py enable_rgbd:=true enable_sync:=true a
 ros2 launch yolo_tools rgbd2mesh.launch.py
 ~~~
 ## config
+- 
