@@ -1,12 +1,14 @@
-# note
+# TODO
 - 遅延がすごいのでpclで実装するかrealsense-ros内で実装すべき
-- ~~setup.py だと --symlink-install がきかないらしいので config と launch を変えたらビルドし直すこと~~
+## rgb2mesh
+- realsense の点群と生成したmeshの位置が微妙にずれてる？
+  - frame_idとtfを確認
+  
+# install
 - `--symlink-install` で`~/ros2_ws/install/yolo_tools/share/yolo_tools/`にシンボリックリンクが生成されない場合は最新の`python3-colcon-core`をインストール
 ~~~
 sudo apt install python3-colcon-core
 ~~~
-
-# install
 ~~~
 cd ~/ros2_ws/src
 git clone https://github.com/yuyaa199908/yolo_tools
