@@ -18,6 +18,7 @@ def generate_launch_description():
             namespace='rgbd2mesh',
             executable='rgbd2mesh',
             remappings=[('/input_rgbd', '/camera/rgbd'),
+                        ('/output_cloud', '/hoge/cloud'),
                         ('/output_mesh', '/hoge/mesh_no_color')],
             parameters=[config]
         ),
