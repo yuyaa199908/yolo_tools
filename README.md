@@ -44,3 +44,23 @@ ros2 launch yolo_tools rgbd2mesh.launch.py
 ## config
 =======
 >>>>>>> 50d57a5ed7fa079ccbcfd3e8cf3b26ebe36d7f97
+## info
+~~~
+# https://www.open3d.org/docs/release/python_api/open3d.geometry.TriangleMesh.html
+"""
+open3d.geometry.TriangleMesh
+頂点: p1, p2, ..., pn
+頂点インデックス： 1,2, ..., n
+mesh.vertices = [[p1_x, p1_y, p1_z], ... ,[pn_x, pn_y, pn_z]]
+mesh.vertices = [[p1_r, p1_g, p1_b], ... ,[pn_r, pn_g, pn_b]]
+
+三角形: t1, t2,...,tm 
+mesh.triangles = [[t1_1, t1_2, t1_3],...,[tm_1, tm_2, tm_3]]
+
+ex. t = [5,1,2]
+p5 *----* p1
+        \ |
+        \|
+        * p2
+"""
+~~~

@@ -1,11 +1,18 @@
 /**:
   ros__parameters:
-    image_scale: 1.0
     frame_id_ground: "map" #default: "map"
-    frame_id_depth: "camera_color_frame"  #default: "camera_color_optical_frame"
+    frame_id_depth: "camera_color_optical_frame"  #default: "camera_color_optical_frame"
     depth_range_max: 0.8 #[m]
     is_display_open3d: False
     marker_ns: "marker"
+    is_publish_mesh: True
+    output_mesh_path: "/home/aichi2204/ros2_ws/src/IVRC/yolo_tools/mesh.ply"
+    camera: # realsense 435if
+      width: 640
+      height: 480
+      K: [618.33599854,   0.0,         311.00698853,   
+          0.0,         618.52191162,   239.00808716,
+          0.0,           0.0,           1.0        ]
     TSDF:
       voxel_length: 0.005  #default: 4/512 = 0.0078125[m]
-      sdf_trunc: 0.1  #default: 0.04[m]
+      sdf_trunc: 0.025  #default: 0.04[m]

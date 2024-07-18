@@ -4,7 +4,7 @@ import logging
 # msgs
 from realsense2_camera_msgs.msg import RGBD
 # from sensor_msgs.msg import PointCloud2, PointField, Image
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Bool
 from geometry_msgs.msg import Point,Pose, Vector3, PoseStamped
 from shape_msgs.msg import Mesh, MeshTriangle
 from sensor_msgs.msg import PointCloud2, PointField, Image
@@ -24,6 +24,7 @@ from builtin_interfaces.msg import Time
 import struct
 from tf2_ros import Buffer, TransformListener
 from scipy.spatial.transform import Rotation
+from collections import deque
 
 class RGBD2MESH(Node):
     def __init__(self):
@@ -31,14 +32,25 @@ class RGBD2MESH(Node):
         self.init_param()
 
         # qos_policy = rclpy.qos.QoSProfile(depth=10, reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT)
-        self.sub_image = self.create_subscription(
-                            RGBD(), 
-                            '/input_rgbd', 
-                            self.CB_main,
+        self.sub_image = self.create_subscription(RGBD(), '/input_rgbd', self.CB_main,10)
+        self.sub_flag_move = self.create_subscription(
+                            Bool(),
+                            '/servo_state_move',
+                            self.CB_update_state_move,
                             10)
+        self.sub_flag_create_mesh = self.create_subscription(
+                            Bool(),
+                            '/op_create_mesh',
+                            self.CB_update_op1,
+                            10)
+        self.sub_flag_save_mesh = self.create_subscription(
+                            Bool(),
+                            '/op_save_mesh',
+                            self.CB_update_op2,
+                            10)
+        
+
         self.pub_mesh =  self.create_publisher(Marker, '/output_mesh', 10)
-        self.pub_cloud =  self.create_publisher(PointCloud2, '/output_cloud', 10)
-        self.pub_pose =  self.create_publisher(PoseStamped, '/camera_pose', 10)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -49,68 +61,71 @@ class RGBD2MESH(Node):
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
         )
 
+        self.cnt = 0
+        self.is_move = True
+        self.is_create_mesh = False
+        self.is_save_mesh = False
+
         if self.is_display_open3d:
             self.vis = o3d.visualization.Visualizer()
             self.vis.create_window()
             self.mesh = o3d.geometry.TriangleMesh()
             self.geom_added = False
 
+        self.last_camera_pose = np.array([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]])
+
+        self.pinhole_camera_intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            self.cam_w, self.cam_h, self.cam_K[0],self.cam_K[4], self.cam_K[2], self.cam_K[5]
+        )
+
     def CB_main(self, msg):
-        rgbd = self.convert_msg_to_rgbd(msg)
-        height, width = np.asarray(rgbd.depth).shape
-        pinhole_camera_intrinsic = self.convert_msg_to_camera_intrinsic(msg,height,width)
+        if self.is_move == False:
+            self.get_logger().info(f"\nwait for servo to stop\n")
+            if self.is_save_mesh == True:
+                mesh = self.create_mesh()
 
-        camera_pose = self.convert_tf_to_camera_pose()
-        self.volume.integrate(
-            rgbd,
-            pinhole_camera_intrinsic,
-            camera_pose
-            ) 
+                o3d.io.write_triangle_mesh(self.output_mesh_path, mesh, write_ascii=True)
 
-        # https://www.open3d.org/docs/release/python_api/open3d.geometry.TriangleMesh.html
-        """
-        open3d.geometry.TriangleMesh
-        頂点: p1, p2, ..., pn
-        頂点インデックス： 1,2, ..., n
-        mesh.vertices = [[p1_x, p1_y, p1_z], ... ,[pn_x, pn_y, pn_z]]
-        mesh.vertices = [[p1_r, p1_g, p1_b], ... ,[pn_r, pn_g, pn_b]]
+                self.is_save_mesh = False
+                self.get_logger().info(f"\n ---saved --- \n")
 
-        三角形: t1, t2,...,tm 
-        mesh.triangles = [[t1_1, t1_2, t1_3],...,[tm_1, tm_2, tm_3]]
+        else:
+            rgbd = self.convert_msg_to_rgbd(msg)
+            # カメラパラメータは固定値を使う
+            # height, width = np.asarray(rgbd.depth).shape
+            # pinhole_camera_intrinsic = self.convert_msg_to_camera_intrinsic(msg,height,width)
 
-        ex. t = [5,1,2]
-        p5 *----* p1
-             \ |
-              \|
-               * p2
-        """
+            camera_pose = self.convert_tf_to_camera_pose()
+            self.volume.integrate(
+                rgbd,
+                self.pinhole_camera_intrinsic,
+                np.linalg.inv(camera_pose)
+                ) 
 
-        if self.is_publish_cloud:
-            pcd = self.volume.extract_voxel_point_cloud()
-            msg_cloud = self.create_msg_cloud(pcd)
-            self.pub_cloud.publish(msg_cloud)
+            if self.is_publish_mesh:
+                mesh = self.create_mesh()
+            
+                #TODO: 表示オブジェクトの更新がうまく行ってない？
+                if self.is_display_open3d:
+                    self.mesh = mesh
+                    if self.geom_added == False:
+                        self.vis.add_geometry(self.mesh)
+                        self.geom_added = True
+                    self.vis.update_geometry(self.mesh)
+                    self.vis.poll_events()
+                    self.vis.update_renderer()
 
-        if self.is_publish_mesh:
-            mesh = self.volume.extract_triangle_mesh()
-            # mesh.compute_vertex_normals()   #?
-
-            #TODO: 表示オブジェクトの更新がうまく行ってない？
-            if self.is_display_open3d:
-                self.mesh = mesh
-                if self.geom_added == False:
-                    self.vis.add_geometry(self.mesh)
-                    self.geom_added = True
-                self.vis.update_geometry(self.mesh)
-                self.vis.poll_events()
-                self.vis.update_renderer()
-
-            msg_marker = self.create_msg_mesh(mesh)
-            self.pub_mesh.publish(msg_marker)
-            # self.volume.reset()
+                msg_marker = self.create_msg_mesh(mesh)
+                self.pub_mesh.publish(msg_marker)
+                # self.volume.reset()
 
     def create_msg_mesh(self, mesh):
         msg = Marker()
-        msg.header.frame_id = "camera_color_optical_frame" #"camera_color_optical_frame" #self.frame_id_depth
+        msg.header.frame_id =  self.frame_id_ground
         now = self.get_clock().now()
         msg.header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
         msg.ns = self.marker_ns
@@ -127,18 +142,6 @@ class RGBD2MESH(Node):
         msg.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
         return msg
         
-    #TODO: 点の色がおかしい
-    def create_msg_cloud(self,pcd):
-        header = Header()
-        now = self.get_clock().now()
-        header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-        header.frame_id = self.frame_id_ground
-        rgb_float_array = self.convert_rgb_array_to_float(pcd.colors)
-        arr = np.concatenate([np.asarray(pcd.points) ,rgb_float_array.reshape((-1,1))],1)
-        pc = PointCloud.from_xyzrgb_points(arr) #PointCloud.from_points(arr, fields, types)
-        msg = pc.to_msg(header)
-        return msg
-
     def convert_msg_to_rgbd(self,msg):
         input_rgb = cv2.cvtColor(CvBridge().imgmsg_to_cv2(msg.rgb), cv2.COLOR_BGR2RGB).astype(np.uint8)
         input_d = CvBridge().imgmsg_to_cv2(msg.depth, "passthrough") #.astype(np.int32)
@@ -168,88 +171,76 @@ class RGBD2MESH(Node):
             [0.0, 0.0, 0.0, 1.0]])
         
         try:
-            trans = self.tf_buffer.lookup_transform(
-                self.frame_id_ground, 
-                self.frame_id_depth, 
-                rclpy.time.Time())
-            
+            trans = self.tf_buffer.lookup_transform(self.frame_id_ground, self.frame_id_depth, rclpy.time.Time())
             tx,ty,tz = trans.transform.translation.x,trans.transform.translation.y,trans.transform.translation.z
             rx,ry,rz,rw = trans.transform.rotation.x,trans.transform.rotation.y ,trans.transform.rotation.z,trans.transform.rotation.w
             rot = Rotation.from_quat(np.array([rx,ry,rz,rw]))
-            self.get_logger().info(f"t: {tx,ty,tz}")
-            self.get_logger().info(f"Rot(euler): {rot.as_euler('xyz', degrees=True)}")
-            camera_pose[:3,:3] = np.dot(
-                                    rot.as_matrix(), 
-                                    np.array([[-1,0,0],
-                                                [ 0, -1, 0],
-                                                [ 0, 0, 1]]))    # z軸回りに180回転
+            # self.get_logger().info(f"t: {tx,ty,tz}")
+            # self.get_logger().info(f"Rot(euler): {rot.as_euler('xyz', degrees=True)}")
+            camera_pose[:3,:3] = rot.as_matrix(),      
             camera_pose[:3,3] = np.array([tx,ty,tz])
 
-            if self.is_publish_camera_pose:
-                msg = PoseStamped()
-                msg.header.frame_id = self.frame_id_ground
-                now = self.get_clock().now()
-                msg.header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
-                msg.pose.position.x = tx
-                msg.pose.position.y = ty
-                msg.pose.position.z = tz
-                msg.pose.orientation.x = rx
-                msg.pose.orientation.y = ry
-                msg.pose.orientation.z = rz
-                msg.pose.orientation.w = rw
-                self.pub_pose.publish(msg)
+            self.last_camera_pose = camera_pose # update camera_pose
+            return camera_pose
 
         except:
             self.get_logger().error(f"Can't convert tf to camera pose !!!!!!!!!")
-            pass
-        
-        return camera_pose
+            return self.last_camera_pose    # tfからcamera_pose を取得できなかったら最新のカメラポーズを使う
 
-    def convert_rgb_array_to_float(self, rgb_array):
-        """
-        Convert an array of RGB values (0.0 to 1.0) to an array of single float32 RGB values.
-        """
-        rgb_float_array = np.apply_along_axis(lambda x: self.rgb_to_float(x[2], x[1], x[0]), 1, rgb_array)
-        return rgb_float_array
+    def CB_update_state_move(self, msg):
+        self.is_move = msg.data
 
-    def rgb_to_float(self, r, g, b):
-        """
-        Convert separate R, G, B values (0.0 to 1.0) to a single float32 RGB value.
-        """
-        # Ensure the RGB values are in the range 0 to 255
-        r = int(r * 255.0)
-        g = int(g * 255.0)
-        b = int(b * 255.0)
-        
-        # Combine the RGB values into a single 32-bit integer
-        rgb_int = (r << 16) | (g << 8) | b
-        
-        # Pack this integer into a float32
-        rgb_float = struct.unpack('f', struct.pack('I', rgb_int))[0]
-        return rgb_float
+    def CB_update_op1(self, msg):
+        self.is_create_mesh  = msg.data
+    
+    def CB_update_op2(self, msg):
+        self.is_save_mesh  = msg.data
 
     def init_param(self):
-        self.declare_parameter('image_scale', 1.0)
         self.declare_parameter('frame_id_ground', "map")
-        self.declare_parameter('frame_id_depth', "camera_depth_optical_frame")
+        self.declare_parameter('frame_id_depth', "camera_color_optical_frame")
         self.declare_parameter('depth_range_max', 4.0)
         self.declare_parameter('is_display_open3d', True)
+        self.declare_parameter('is_publish_mesh', True)
         self.declare_parameter('marker_ns', "marker")
         self.declare_parameter('TSDF.voxel_length',4.0 / 512.0)
         self.declare_parameter('TSDF.sdf_trunc',0.04)
-        
-        self.fxy = self.get_parameter("image_scale").get_parameter_value().double_value
+        self.declare_parameter('camera.width',640)
+        self.declare_parameter('camera.height',260)
+        self.declare_parameter('camera.K', 
+                               [618.33599854,   0.0,         311.00698853,   
+                                0.0,         618.52191162,   239.00808716,
+                                0.0,           0.0,           1.0        ])
+        self.declare_parameter('output_mesh_path', "./hoge.ply")
+
         self.frame_id_ground = self.get_parameter('frame_id_ground').get_parameter_value().string_value
         self.frame_id_depth = self.get_parameter('frame_id_depth').get_parameter_value().string_value
         self.depth_range_max = self.get_parameter('depth_range_max').get_parameter_value().double_value
         self.is_display_open3d = self.get_parameter('is_display_open3d').get_parameter_value().bool_value
+        self.is_publish_mesh = self.get_parameter('is_publish_mesh').get_parameter_value().bool_value
         self.marker_ns = self.get_parameter('marker_ns').get_parameter_value().string_value
         self.TSDF_voxel_length = self.get_parameter('TSDF.voxel_length').get_parameter_value().double_value
         self.TSDF_sdf_trunc = self.get_parameter('TSDF.sdf_trunc').get_parameter_value().double_value
+        self.cam_w = self.get_parameter('camera.width').get_parameter_value().integer_value
+        self.cam_h = self.get_parameter('camera.height').get_parameter_value().integer_value
+        self.cam_K = self.get_parameter('camera.K').get_parameter_value().double_array_value
+        self.output_mesh_path = self.get_parameter('output_mesh_path').get_parameter_value().string_value
 
-        self.is_publish_mesh = True
-        self.is_publish_cloud = False
-        self.is_publish_camera_pose = False
+    def create_mesh(self):
+        """
+        TODO:
+        - メッシュ作成手法(TSDFでいいのか?)
+        - 色の改良(https://www.open3d.org/docs/0.16.0/tutorial/pipelines/color_map_optimization.html)
+            - メッシュは座標系さえあってればどんな手法でもあり
+            - RGBDのリストと対応するカメラ姿勢を camera_trajectory として保存
+            - どの画像を選ぶか？
+                - 理想的には全包囲からまんべんなく画像がほしい  
+                - カメラ姿勢から選択できるようなアルゴリズムが必要
+                - これで来たらガウシアンスプラッティングの見栄えも良くなる
+        """
+        mesh = self.volume.extract_triangle_mesh()  # シンプルにメッシュ作るだけ
+        mesh.compute_vertex_normals()   #?
+        return mesh
 
 def main():
     rclpy.init()
