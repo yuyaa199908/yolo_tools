@@ -5,7 +5,7 @@ import logging
 from realsense2_camera_msgs.msg import RGBD
 # from sensor_msgs.msg import PointCloud2, PointField, Image
 from std_msgs.msg import Header
-from geometry_msgs.msg import Point,Pose, Vector3
+from geometry_msgs.msg import Point,Pose, Vector3, PoseStamped
 from shape_msgs.msg import Mesh, MeshTriangle
 from sensor_msgs.msg import PointCloud2, PointField, Image
 from visualization_msgs.msg import Marker
@@ -38,6 +38,7 @@ class RGBD2MESH(Node):
                             10)
         self.pub_mesh =  self.create_publisher(Marker, '/output_mesh', 10)
         self.pub_cloud =  self.create_publisher(PointCloud2, '/output_cloud', 10)
+        self.pub_pose =  self.create_publisher(PoseStamped, '/camera_pose', 10)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -105,10 +106,11 @@ class RGBD2MESH(Node):
 
             msg_marker = self.create_msg_mesh(mesh)
             self.pub_mesh.publish(msg_marker)
+            # self.volume.reset()
 
     def create_msg_mesh(self, mesh):
         msg = Marker()
-        msg.header.frame_id = self.frame_id_ground
+        msg.header.frame_id = "camera_color_optical_frame" #"camera_color_optical_frame" #self.frame_id_depth
         now = self.get_clock().now()
         msg.header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
         msg.ns = self.marker_ns
@@ -116,7 +118,6 @@ class RGBD2MESH(Node):
         msg.action = 0 #1
         msg.pose = Pose()
         msg.scale = Vector3(x=1.0 ,y=1.0,z=1.0)
-        
         # TODO: 座標変換
         #[a b c] -> [c -a -b]
         for t in mesh.triangles:
@@ -126,6 +127,7 @@ class RGBD2MESH(Node):
         msg.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
         return msg
         
+    #TODO: 点の色がおかしい
     def create_msg_cloud(self,pcd):
         header = Header()
         now = self.get_clock().now()
@@ -166,16 +168,41 @@ class RGBD2MESH(Node):
             [0.0, 0.0, 0.0, 1.0]])
         
         try:
-            trans = self.tf_buffer.lookup_transform(self.frame_id_ground, self.frame_id_depth, rclpy.time.Time())
-            self.get_logger().info(f"Translation: {trans.transform.translation}")
-            self.get_logger().info(f"Rotation: {trans.transform.rotation}")
+            trans = self.tf_buffer.lookup_transform(
+                self.frame_id_ground, 
+                self.frame_id_depth, 
+                rclpy.time.Time())
+            
             tx,ty,tz = trans.transform.translation.x,trans.transform.translation.y,trans.transform.translation.z
             rx,ry,rz,rw = trans.transform.rotation.x,trans.transform.rotation.y ,trans.transform.rotation.z,trans.transform.rotation.w
             rot = Rotation.from_quat(np.array([rx,ry,rz,rw]))
-            camera_pose[:3,:3] = rot.as_dcm()
+            self.get_logger().info(f"t: {tx,ty,tz}")
+            self.get_logger().info(f"Rot(euler): {rot.as_euler('xyz', degrees=True)}")
+            camera_pose[:3,:3] = np.dot(
+                                    rot.as_matrix(), 
+                                    np.array([[-1,0,0],
+                                                [ 0, -1, 0],
+                                                [ 0, 0, 1]]))    # z軸回りに180回転
             camera_pose[:3,3] = np.array([tx,ty,tz])
+
+            if self.is_publish_camera_pose:
+                msg = PoseStamped()
+                msg.header.frame_id = self.frame_id_ground
+                now = self.get_clock().now()
+                msg.header.stamp = Time(sec=now.seconds_nanoseconds()[0], nanosec=now.seconds_nanoseconds()[1])
+                msg.pose.position.x = tx
+                msg.pose.position.y = ty
+                msg.pose.position.z = tz
+                msg.pose.orientation.x = rx
+                msg.pose.orientation.y = ry
+                msg.pose.orientation.z = rz
+                msg.pose.orientation.w = rw
+                self.pub_pose.publish(msg)
+
         except:
+            self.get_logger().error(f"Can't convert tf to camera pose !!!!!!!!!")
             pass
+        
         return camera_pose
 
     def convert_rgb_array_to_float(self, rgb_array):
@@ -222,6 +249,7 @@ class RGBD2MESH(Node):
 
         self.is_publish_mesh = True
         self.is_publish_cloud = False
+        self.is_publish_camera_pose = False
 
 def main():
     rclpy.init()

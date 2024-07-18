@@ -5,6 +5,6 @@
     frame_id: "camera_color_frame"
     pub_interval: 0.25
     yolo:
-      model_path: "/home/aichi2204/ros2_ws/src/tool/yolo_tools/yolo_tools/yolov8n-seg.pt"
+      model_path: "/home/aichi2204/ros2_ws/src/IVRC/yolo_tools/yolo_tools/yolov8n-seg.pt"
       classes: [0]
       # device: "cuda" 
